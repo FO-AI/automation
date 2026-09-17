@@ -1,0 +1,32 @@
+name: Verify shared workflows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  minimal:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checks: >-
+        [{"name":"Shell only","directory":".","install":"true","run":"test -f README.md"}]
+
+  runtimes-and-containers:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checks: >-
+        [
+          {"name":"Python and uv","directory":".","python-version":"3.12","uv-version":"0.12.15",
+           "install":"uv --version",
+           "run":"python -c 'import os, sys; assert sys.version_info[:2] == (3, 12); assert os.environ[\"SMOKE_VALUE\"] == \"passed\"'",
+           "env":{"SMOKE_VALUE":"passed"}},
+          {"name":"Node and pnpm","directory":".","node-version":"22","pnpm-version":"10.5.0",
+           "install":"pnpm --version",
+           "run":"node -e 'if (process.versions.node.split(\".\")[0] !== \"22\") process.exit(1)'"}
+        ]
+      containers: >-
+        [{"name":"Smoke","context":".github/fixtures","file":".github/fixtures/Dockerfile"}]
