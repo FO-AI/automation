@@ -2,7 +2,8 @@
 
 Shared GitHub Actions workflows for FO-AI repos. Each app supplies its checks and deployment script.
 
-**Local starter:** publish and validate this repository before creating `v1`. The examples below require that release.
+Use a verified release or full commit SHA. The examples below use `v1`;
+commit pins let each app review shared pipeline upgrades individually.
 
 ## CI
 
