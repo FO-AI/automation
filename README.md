@@ -1,13 +1,28 @@
 # FO-AI automation
 
-Shared GitHub Actions workflows for FO-AI repos. Each app supplies its checks and deployment script.
+Reusable GitHub Actions workflows. Apps supply their own test commands, Dockerfiles,
+deployment scripts, and settings.
 
-Use a verified release or full commit SHA. The examples below use `v1`;
-commit pins let each app review shared pipeline upgrades individually.
+## Naming
 
-## CI
+| Location | File | Purpose |
+| --- | --- | --- |
+| App repo | `.github/workflows/ci.yml` → **CI** | Runs separate **Frontend** and **Backend** jobs, then optional Docker builds. |
+| App repo | `.github/workflows/cd.yml` → **CD** | Calls Azure CD after successful main CI. |
+| App repo | `scripts/ci-frontend.sh`, `scripts/ci-backend.sh` | App-owned check commands. |
+| This repo | [reusable-ci.yml](.github/workflows/reusable-ci.yml) | Installs runtimes and runs the supplied checks/builds. |
+| This repo | [reusable-azure-cd.yml](.github/workflows/reusable-azure-cd.yml) | Selects the environment, validates the commit, signs into Azure, and runs the app's deployment script. |
+| This repo | [.github/workflows/ci.yml](.github/workflows/ci.yml) | Tests these reusable workflows. |
 
-Create `.github/workflows/ci.yml` in the app:
+Use a tested full commit SHA in callers. The new filenames are the **v2 interface**;
+`v1` and `v1.0.0` retain the old files. Upgrade the filename and commit pin together.
+Keep existing pins until the new caller passes its checks. An Actions sidebar shows
+the app's workflow name, not the reusable workflow's name.
+
+## CI caller
+
+Create `.github/workflows/ci.yml` in the app. Replace `RELEASE_SHA` with the tested
+v2 release commit, and supply your paths, installs, and scripts:
 
 ```yaml
 name: CI
@@ -19,86 +34,89 @@ permissions:
   contents: read
 jobs:
   ci:
-    uses: FO-AI/automation/.github/workflows/ci.yml@v1
+    uses: FO-AI/automation/.github/workflows/reusable-ci.yml@RELEASE_SHA
     with:
       checks: >-
-        [{"name":"web","directory":"web","node-version":"22",
-          "install":"npm ci","run":"npm run lint && npm test && npm run build"}]
+        [
+          {"name":"Frontend","directory":".","node-version":"22",
+           "install":"npm --prefix frontend ci","run":"bash scripts/ci-frontend.sh"},
+          {"name":"Backend","directory":".","python-version":"3.12","uv-version":"0.12.15",
+           "install":"uv sync --project backend --locked --extra dev","run":"bash scripts/ci-backend.sh"}
+        ]
 ```
+
+Each matrix entry creates a separate parallel job and check result. Both checks
+run even when one fails. Optional Docker builds wait for **all** checks to pass.
 
 | Input | Value |
 | --- | --- |
-| `checks` (required) | Nonempty JSON array; each check needs `name`, `directory`, `install`, and `run`. |
-| `containers` (optional) | JSON array of `{name, context, file, build-args?}` objects. Builds after checks pass; never publishes. |
+| `checks` (required) | Nonempty JSON array; each item needs `name`, `directory`, `install`, and `run`. |
+| `containers` (optional) | JSON array of `{name, context, file, build-args?}`. Builds only; never publishes. |
 
-See [CI input definitions](.github/workflows/ci.yml) for optional runtimes and configuration.
-Commands can call app scripts. Use locked installs such as `npm ci`,
-`pnpm install --frozen-lockfile`, or `uv sync --locked`.
+Optional check fields: `node-version`, `python-version`, `pnpm-version`, `uv-version`,
+and nonsecret `env`. Use locked dependency installs. CI reads the calling app's source;
+do not pass application secrets or credentials in checks or build arguments.
 
-CI reads the calling app's source with no application secrets or Azure access.
-Keep `env` and build arguments nonsecret.
+## CD caller
 
-## Azure deployment wrapper
-
-Add this job under `jobs` in the same file to deploy after CI passes on `main`:
+Create `.github/workflows/cd.yml` in the app:
 
 ```yaml
+name: CD
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions: {}
+jobs:
   deploy:
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: FO-AI/automation/.github/workflows/reusable-azure-cd.yml@RELEASE_SHA
     permissions:
       contents: read
       id-token: write
-    uses: FO-AI/automation/.github/workflows/deploy-azure.yml@v1
     with:
       environment: dev
+      allow-manual: true
       deploy-command: bash scripts/deploy.sh
-    secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      API_ENV_FILE: ${{ secrets.API_ENV_FILE }}
-      WEB_ENV_FILE: ${{ secrets.WEB_ENV_FILE }}
+    secrets: inherit
 ```
 
-Before enabling deployment:
+Before enabling CD, configure the app's GitHub environment, branch restrictions,
+Azure OIDC identity/roles, and deployment script. `deploy.sh` is app-owned; a Python
+app may use `python scripts/deploy.py`. The script owns publishing, deployment,
+health checks, recovery, and temporary secret-file cleanup.
 
-1. Add `scripts/deploy.sh` to the app; it is **not included**. The script owns image
-   build/push, configuration, health checks, rollback, and temporary secret-file cleanup.
-2. Configure the caller's GitHub environment with branch restrictions and available
-   review protection. Its secrets override passed secrets with the same names.
-3. Set up Azure OIDC trust and roles for **each calling repo/environment**. Verify
-   subject claims and any `job_workflow_ref` restrictions.
+Set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` as caller
+variables or secrets. Secrets take precedence; selected environment secrets
+override passed secrets of the same name. Optional inputs include runtime versions
+and nonsecret `deployment-vars`; see the [workflow inputs](.github/workflows/reusable-azure-cd.yml).
 
-The three `AZURE_*` IDs can be GitHub variables or secrets. The wrapper uses secrets
-first, then variables; omit those secret mappings when using variables. Missing IDs
-fail validation before Azure login.
+The script receives `DEPLOY_SHA`, `IMAGE_TAG`, read-only `GH_TOKEN`, and
+`DEPLOYMENT_VARS_JSON` resolved inside the selected environment. Read only the keys
+your app needs. Optional `API_ENV_FILE` and `WEB_ENV_FILE` secrets are exposed to
+the deployment command when configured.
 
-The script receives `DEPLOY_SHA` and `IMAGE_TAG` for the checked-out commit, and
-`GH_TOKEN` for read-only GitHub checks. `DEPLOYMENT_VARS_JSON` contains the caller's
-GitHub variables resolved inside the selected environment. Read only the keys your
-app needs; use this for environment-scoped settings that caller inputs cannot access.
-`API_ENV_FILE` and `WEB_ENV_FILE` are optional secrets exposed only to that step;
-omit their mappings if unused. See [deployment inputs](.github/workflows/deploy-azure.yml)
-for runtimes and nonsecret `deployment-vars`.
+The wrapper accepts successful same-repo main-push CI runs and direct main pushes.
+Manual deployment is opt-in and accepts current main only; it does not require a
+prior successful CI run. Keep historical-image recovery in the app.
 
 Deployments run one at a time per repo/environment without cancelling an active run.
-A stale commit is rejected before Azure login; `main` can still advance during deployment.
-Keep a final stale-commit check in the app script immediately before changing Azure.
-The wrapper also accepts successful `workflow_run` events from same-repo pushes to
-`main`. Set `allow-manual: true` to accept `workflow_dispatch` on current `main`;
-this does not require a prior CI run. It cannot deploy older commits. Keep existing
-historical recovery workflows until migrated and verified.
+Stale commits fail before Azure login. Recheck main in the app script immediately
+before updating Azure because main can advance while an image builds.
 
-## Releases and access
+## Maintenance
 
-Public callers need a public shared repo. Private shared repos require eligible
-private callers and Settings → Actions → General → Access configuration.
-Keep app configuration in app repos and secrets in GitHub environments.
+Run `actionlint .github/workflows/*.yml`, the included CI self-tests, and an app
+pilot before publishing a release. Keep required check names aligned with the
+caller: normally `ci / Frontend`, `ci / Backend`, and its Docker build checks.
+Apps with an aggregate gate can require that gate instead.
 
-Protect the default branch and review changes. Run
-`actionlint .github/workflows/*.yml` and test in a disposable caller before tagging.
-The included `verify.yml` also checks runtimes, matrix options, and Docker builds on
-PRs and pushes to this repo's `main`.
-Moving `@v1` delivers compatible updates centrally; pin a full commit SHA for
-individually reviewed upgrades. External actions are SHA-pinned.
+The v2 rename changes paths and display names only; inputs, permissions, and
+deployment guards retain their existing behavior. Existing SHA pins and v1 tags
+continue to resolve the original workflows. Callers using the old paths on `main`
+must migrate. Reusable workflows should always use a release or commit pin.
+
+Public callers require a public shared repo. Keep app configuration in app repos
+and credentials in GitHub secrets or Azure. External actions are SHA-pinned.

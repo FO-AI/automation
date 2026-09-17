@@ -1,4 +1,4 @@
-name: Shared Azure deployment
+name: Reusable Azure CD
 
 on:
   workflow_call:
