@@ -12,7 +12,7 @@ deployment scripts, and settings.
 | App repo | `scripts/ci-frontend.sh`, `scripts/ci-backend.sh` | App-owned check commands. |
 | This repo | [reusable-ci.yml](.github/workflows/reusable-ci.yml) | Installs runtimes and runs the supplied checks/builds. |
 | This repo | [reusable-azure-cd.yml](.github/workflows/reusable-azure-cd.yml) | Selects the environment, validates the commit, signs into Azure, and runs the app's deployment script. |
-| This repo | [.github/workflows/ci.yml](.github/workflows/ci.yml) | Tests these reusable workflows. |
+| This repo | [.github/workflows/ci.yml](.github/workflows/ci.yml) | Tests CI runtimes, check execution, and Docker builds. Azure CD needs an app deployment pilot. |
 
 Use a tested full commit SHA in callers. The new filenames are the **v2 interface**;
 `v1` and `v1.0.0` retain the old files. Upgrade the filename and commit pin together.
@@ -87,6 +87,9 @@ Before enabling CD, configure the app's GitHub environment, branch restrictions,
 Azure OIDC identity/roles, and deployment script. `deploy.sh` is app-owned; a Python
 app may use `python scripts/deploy.py`. The script owns publishing, deployment,
 health checks, recovery, and temporary secret-file cleanup.
+
+If your Azure trust policy restricts `job_workflow_ref`, allow the new
+`reusable-azure-cd.yml` path and chosen pin before upgrading the caller.
 
 Set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` as caller
 variables or secrets. Secrets take precedence; selected environment secrets
