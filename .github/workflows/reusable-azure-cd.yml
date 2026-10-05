@@ -130,4 +130,9 @@ jobs:
           # Resolve environment variables here, after the deployment environment
           # is selected; a caller job's inputs cannot read environment-only vars.
           DEPLOYMENT_VARS_JSON: ${{ toJSON(vars) }}
+          # The same for secrets, so an app can keep one GitHub secret per value
+          # instead of a whole env file. Resolved here for the same reason: only this
+          # job sees the selected environment's secrets. Holds every secret the caller
+          # inherits; the script reads only the keys it needs and never prints it.
+          DEPLOYMENT_SECRETS_JSON: ${{ toJSON(secrets) }}
         run: bash -euo pipefail -c "$DEPLOY_COMMAND"

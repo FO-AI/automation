@@ -30,7 +30,7 @@ two YAML files below and writes the three scripts.
 | --- | --- | --- | --- |
 | `scripts/ci.sh <check>` | Runs one named check (`backend`, `frontend`, …). Sets its own test-only env so it behaves identically on a laptop. Exits nonzero on failure. | Touch any cloud service. Read secrets. | Nothing beyond the check name; dependencies are installed by the caller. |
 | `scripts/publish.sh` | Builds every image for `$IMAGE_TAG`, pushes each to ACR as `<repo>-<service>:$IMAGE_TAG`, and smoke-tests what it pushed (at minimum, proves both tags resolve to digests). | Deploy. Tag anything `latest`. | `ACR_NAME`, `IMAGE_TAG` (a full commit SHA), an `az` login with push rights, plus any nonsecret build args as repository variables. |
-| `scripts/cd.sh` | Runs inside `reusable-azure-cd.yml`. Resolves the digests published for `$IMAGE_TAG` (`az acr repository show --image <repo>:$IMAGE_TAG --query digest`), promotes **by digest**, rechecks main immediately before its first change to Azure, verifies. | Build. Accept a digest from its environment. | From the wrapper: `DEPLOY_SHA`, `IMAGE_TAG`, `GH_TOKEN`, `DEPLOYMENT_VARS_JSON`, `API_ENV_FILE`, `WEB_ENV_FILE`. |
+| `scripts/cd.sh` | Runs inside `reusable-azure-cd.yml`. Resolves the digests published for `$IMAGE_TAG` (`az acr repository show --image <repo>:$IMAGE_TAG --query digest`), promotes **by digest**, rechecks main immediately before its first change to Azure, verifies. | Build. Accept a digest from its environment. | From the wrapper: `DEPLOY_SHA`, `IMAGE_TAG`, `GH_TOKEN`, `DEPLOYMENT_VARS_JSON`, `DEPLOYMENT_SECRETS_JSON`, `API_ENV_FILE`, `WEB_ENV_FILE`. |
 
 Publishing is a local job in each repo rather than part of the reusable workflows, so the
 Azure CD wrapper never needs image-build machinery and the deploy job needs no `resolve`
@@ -174,6 +174,15 @@ The script receives `DEPLOY_SHA`, `IMAGE_TAG`, read-only `GH_TOKEN`, and
 `DEPLOYMENT_VARS_JSON` resolved inside the selected environment. Read only the keys
 your app needs. Optional `API_ENV_FILE` and `WEB_ENV_FILE` secrets are exposed to
 the deployment command when configured.
+
+`DEPLOYMENT_SECRETS_JSON` is the secrets equivalent: a JSON object of every secret the
+caller inherits, resolved inside the selected environment, so an app can keep one GitHub
+secret per value and see each one's name and update date in `gh secret list --env <env>`.
+It also holds the OIDC values and `github_token`. Read only the keys your app needs,
+never print the object, and pass values on stdin or in files rather than as command
+arguments. GitHub masks each secret's raw value, but a value containing quotes or
+backslashes appears escaped inside the JSON, so emit `::add-mask::` for any value you
+extract before it can reach a log.
 
 The wrapper accepts successful same-repo main-push CI runs and direct main pushes.
 Manual deployment is opt-in and accepts current main only; it does not require a
